@@ -44,6 +44,18 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+## Testing PawPal+
+
+```bash
+python -m pytest tests/test_pawpal.py -v
+```
+
+The test suite covers the three core scheduling behaviors: tasks are placed in chronological order by start time, recurring tasks automatically produce a correctly-dated successor when marked complete, and the conflict detector flags any two tasks booked at the same time. Each behavior has a happy-path test and an edge-case test (e.g. equal-priority tie-breaking, a missing due date, three tasks at the same slot).
+
+**Confidence rating:** ☆☆☆☆☆ / 5
+
+---
+
 ### Suggested workflow
 
 1. Read the scenario carefully and identify requirements and edge cases.
