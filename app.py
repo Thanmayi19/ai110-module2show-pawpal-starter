@@ -4,8 +4,8 @@ import streamlit as st
 from datetime import date
 
 from pawpal_system import (
-    DailyTask,
     Constraint,
+    DailyTask,
     Pet,
     Schedule,
     Scheduler,
@@ -25,6 +25,13 @@ st.caption("A smart pet care scheduling assistant.")
 # Session-state initialisation
 # ---------------------------------------------------------------------------
 
+if "owner" not in st.session_state:
+    st.session_state.owner = User(
+        name="Jordan Smith",
+        email="jordan@example.com",
+        time_available=120,
+    )
+
 if "tasks" not in st.session_state:
     st.session_state.tasks: list[DailyTask] = []
 
@@ -37,38 +44,88 @@ if "last_schedule" not in st.session_state:
 
 st.header("1. Owner Information")
 
+owner: User = st.session_state.owner
+
 col_a, col_b, col_c = st.columns(3)
 with col_a:
-    owner_name = st.text_input("Full name", value="Jordan Smith", key="owner_name")
+    owner_name = st.text_input("Full name", value=owner.name, key="owner_name")
 with col_b:
-    owner_email = st.text_input("Email", value="jordan@example.com", key="owner_email")
+    owner_email = st.text_input("Email", value=owner.email, key="owner_email")
 with col_c:
     time_available = st.number_input(
         "Time available today (minutes)",
         min_value=10,
         max_value=480,
-        value=120,
+        value=owner.time_available,
         step=10,
         key="time_available",
     )
 
+# Sync editable fields back to the persistent owner object
+owner.name = owner_name.strip()
+owner.email = owner_email.strip()
+owner.time_available = int(time_available)
+
 # ---------------------------------------------------------------------------
-# Section 2 – Pet info
+# Section 2 – Add pets
 # ---------------------------------------------------------------------------
 
-st.header("2. Pet Information")
+st.header("2. Add Pets")
 
-col_d, col_e, col_f = st.columns(3)
-with col_d:
-    pet_name = st.text_input("Pet name", value="Mochi", key="pet_name")
-    species = st.selectbox("Species", ["dog", "cat", "rabbit", "bird", "other"], key="species")
-with col_e:
-    breed = st.text_input("Breed", value="Shiba Inu", key="breed")
-    pet_age = st.number_input("Age (years)", min_value=0, max_value=30, value=3, key="pet_age")
-with col_f:
-    health_notes = st.text_area(
-        "Health notes (optional)", value="", height=100, key="health_notes"
+with st.form("add_pet_form", clear_on_submit=True):
+    col_d, col_e, col_f = st.columns(3)
+    with col_d:
+        pet_name = st.text_input("Pet name", value="Mochi")
+        species = st.selectbox("Species", ["dog", "cat", "rabbit", "bird", "other"])
+    with col_e:
+        breed = st.text_input("Breed", value="Shiba Inu")
+        pet_age = st.number_input("Age (years)", min_value=0, max_value=30, value=3)
+    with col_f:
+        health_notes = st.text_area("Health notes (optional)", value="", height=100)
+
+    submitted = st.form_submit_button("Add Pet", use_container_width=True)
+    if submitted:
+        if not pet_name.strip():
+            st.error("Pet name is required.")
+        else:
+            new_pet = Pet(
+                name=pet_name.strip(),
+                species=species,
+                breed=breed.strip(),
+                age=int(pet_age),
+                health_notes=health_notes.strip(),
+            )
+            owner.add_pet(new_pet)
+            st.success(f"Added {new_pet.name} to {owner.name}'s account.")
+
+# Display current pets from the persistent owner object
+pets = owner.get_pets()
+if pets:
+    st.subheader(f"{owner.name}'s pets")
+    pet_rows = [
+        {
+            "Name": p.name,
+            "Species": p.species,
+            "Breed": p.breed,
+            "Age": p.age,
+            "Health notes": p.health_notes or "—",
+        }
+        for p in pets
+    ]
+    st.table(pet_rows)
+else:
+    st.info("No pets added yet. Use the form above.")
+
+# Use the first pet for scheduling (or let user pick if multiple)
+if pets:
+    selected_pet_name = st.selectbox(
+        "Select pet to schedule",
+        options=[p.name for p in pets],
+        key="selected_pet_name",
     )
+    selected_pet = next(p for p in pets if p.name == selected_pet_name)
+else:
+    selected_pet = None
 
 # ---------------------------------------------------------------------------
 # Section 3 – Task entry
@@ -171,34 +228,20 @@ st.header("5. Generate Schedule")
 plan_date = st.date_input("Plan date", value=date.today(), key="plan_date")
 
 if st.button("Generate Schedule", type="primary", use_container_width=True):
-    if not owner_name.strip():
+    if not owner.name:
         st.error("Please enter the owner's name.")
-    elif not owner_email.strip():
+    elif not owner.email:
         st.error("Please enter the owner's email.")
-    elif not pet_name.strip():
-        st.error("Please enter a pet name.")
+    elif selected_pet is None:
+        st.error("Please add at least one pet before generating a schedule.")
     elif not st.session_state.tasks:
         st.error("Please add at least one task before generating a schedule.")
     else:
-        # Build the object graph
-        user = User(
-            name=owner_name.strip(),
-            email=owner_email.strip(),
-            time_available=int(time_available),
-        )
-
-        pet = Pet(
-            name=pet_name.strip(),
-            species=species,
-            breed=breed.strip(),
-            age=int(pet_age),
-            health_notes=health_notes.strip(),
-        )
-
+        # Re-attach the current task list to the selected pet each run
+        # (tasks are managed separately in session_state)
         for task in st.session_state.tasks:
-            pet.add_task(task)
-
-        user.add_pet(pet)
+            if task not in selected_pet.get_tasks():
+                selected_pet.add_task(task)
 
         constraint = Constraint(
             max_duration=int(max_duration),
@@ -206,7 +249,7 @@ if st.button("Generate Schedule", type="primary", use_container_width=True):
             excluded_categories=list(excluded_categories),
         )
 
-        scheduler = user.create_scheduler(pet)
+        scheduler = owner.create_scheduler(selected_pet)
         scheduler.add_constraint(constraint)
 
         schedule = scheduler.generate_plan(plan_date=plan_date)
@@ -253,21 +296,9 @@ if st.session_state.last_schedule is not None:
     with st.expander("Scheduling reasoning", expanded=True):
         st.info(schedule.reasoning)
 
-    # Constraint validation
-    if "last_schedule" in st.session_state and st.session_state.last_schedule is not None:
-        # Rebuild a lightweight scheduler just for validation display
-        _user_v = User(
-            name=owner_name.strip() or "Owner",
-            email=owner_email.strip() or "owner@example.com",
-            time_available=int(time_available),
-        )
-        _pet_v = Pet(
-            name=pet_name.strip() or "Pet",
-            species=species,
-            breed=breed.strip() or "",
-            age=int(pet_age),
-        )
-        _scheduler_v = Scheduler(user=_user_v, pet=_pet_v)
+    # Constraint validation — reuse the persistent owner and selected_pet
+    if selected_pet is not None:
+        _scheduler_v = Scheduler(user=owner, pet=selected_pet)
         _constraint_v = Constraint(
             max_duration=int(max_duration),
             preferred_times=list(preferred_times),

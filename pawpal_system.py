@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date, time, timedelta
 from enum import Enum
 from uuid import uuid4
 
@@ -32,14 +32,39 @@ class DailyTask:
     def __post_init__(self) -> None:
         if not (1 <= self.priority <= 5):
             raise ValueError(f"priority must be 1–5, got {self.priority}")
+        if self.frequency not in (None, "daily", "weekly"):
+            raise ValueError(f"frequency must be 'daily', 'weekly', or None, got {self.frequency!r}")
 
     notes: str = ""
     is_completed: bool = False
+    frequency: str | None = None        # "daily", "weekly", or None (one-shot)
+    due_date: date | None = None        # when this task is next due
     task_id: str = field(default_factory=lambda: str(uuid4()))
 
-    def mark_complete(self) -> None:
-        """Mark this task as completed."""
+    def mark_complete(self) -> DailyTask | None:
+        """Mark this task as completed and return a successor for recurring tasks.
+
+        Returns a new DailyTask with an updated due_date if frequency is 'daily'
+        or 'weekly', otherwise returns None.
+        """
         self.is_completed = True
+
+        if self.frequency == "daily":
+            next_due = (self.due_date or date.today()) + timedelta(days=1)
+        elif self.frequency == "weekly":
+            next_due = (self.due_date or date.today()) + timedelta(weeks=1)
+        else:
+            return None
+
+        return DailyTask(
+            name=self.name,
+            category=self.category,
+            duration=self.duration,
+            priority=self.priority,
+            notes=self.notes,
+            frequency=self.frequency,
+            due_date=next_due,
+        )
 
     def mark_incomplete(self) -> None:
         """Mark this task as not yet completed."""
@@ -54,6 +79,8 @@ class DailyTask:
             "priority": self.priority,
             "notes": self.notes,
             "is_completed": self.is_completed,
+            "frequency": self.frequency,
+            "due_date": self.due_date.isoformat() if self.due_date else None,
         }
 
 
@@ -234,6 +261,73 @@ class Scheduler:
     def add_constraint(self, constraint: Constraint) -> None:
         """Add a scheduling constraint that generate_plan will respect."""
         self.constraints.append(constraint)
+
+    def mark_task_complete(self, task_id: str) -> DailyTask | None:
+        """Mark a task complete by ID and register its successor if it recurs.
+
+        Finds the task on the scheduler's pet, calls mark_complete(), and — for
+        recurring tasks — adds the returned successor task back to the pet so it
+        appears in future plans.  Returns the successor task, or None for
+        one-shot tasks.
+
+        Raises ValueError if no task with the given task_id exists on the pet.
+        """
+        task = next((t for t in self.pet.get_tasks() if t.task_id == task_id), None)
+        if task is None:
+            raise ValueError(f"No task with id {task_id!r} found on pet '{self.pet.name}'.")
+
+        successor = task.mark_complete()
+        if successor is not None:
+            self.pet.add_task(successor)
+        return successor
+
+    def filter_tasks(
+        self,
+        completed: bool | None = None,
+        pet_name: str | None = None,
+    ) -> list[DailyTask]:
+        """Return tasks from the scheduler's pet filtered by completion status and/or pet name.
+
+        Args:
+            completed: If True, return only completed tasks. If False, return only
+                       pending tasks. If None, completion status is not filtered.
+            pet_name: If provided, return tasks only when the pet's name matches
+                      (case-insensitive). Returns an empty list when it doesn't match.
+
+        Returns:
+            A list of DailyTask objects that satisfy all supplied filters.
+        """
+        if pet_name is not None and self.pet.name.lower() != pet_name.lower():
+            return []
+
+        tasks = self.pet.get_tasks()
+
+        if completed is not None:
+            tasks = [t for t in tasks if t.is_completed == completed]
+
+        return tasks
+
+    def detect_conflicts(self, schedule: Schedule) -> list[str]:
+        """Return a warning string for every pair of tasks that share the same start time.
+
+        Warnings are formatted as:
+            "Conflict: <name A> and <name B> both scheduled at HH:MM for <pet name>"
+        An empty list means no conflicts were found.
+        """
+        warnings: list[str] = []
+        seen: dict[time, str] = {}  # start_time → task name of first task at that time
+
+        for st in schedule.scheduled_tasks:
+            start = st.start_time
+            if start in seen:
+                warnings.append(
+                    f"Conflict: {seen[start]} and {st.task.name} both scheduled at "
+                    f"{start.strftime('%H:%M')} for {self.pet.name}"
+                )
+            else:
+                seen[start] = st.task.name
+
+        return warnings
 
     def validate_schedule(self, schedule: Schedule) -> list[str]:
         """Check all constraints against the schedule.
