@@ -2,6 +2,15 @@
 
 You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
 
+## Features
+
+- **Priority-first scheduling** — the scheduler sorts tasks by priority (highest first) and, when priorities tie, by duration (shortest first), so the most important care happens early and the day fills efficiently.
+- **Category filtering** — `filter_tasks()` lets the app show only pending or completed tasks, and any category can be excluded from a plan entirely via a `Constraint` so tasks like grooming never appear on days the owner opts out.
+- **Daily and weekly recurrence** — marking a task complete automatically creates a successor with the next due date (`+1 day` for daily, `+7 days` for weekly) and registers it on the pet, so recurring care like medication or grooming reappears in future plans without any manual re-entry.
+- **Conflict detection** — `detect_conflicts()` scans a generated schedule for any two tasks that share the same start time and returns a plain-English warning for each collision, leaving the schedule unchanged so the owner can decide how to resolve it.
+
+---
+
 ## Scenario
 
 A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
@@ -56,6 +65,128 @@ The test suite covers the three core scheduling behaviors: tasks are placed in c
 
 ---
 
+## Class Diagram
+
+```mermaid
+classDiagram
+    direction TB
+
+    class TaskCategory {
+        <<enumeration>>
+        WALK
+        FEEDING
+        MEDICATION
+        ENRICHMENT
+        GROOMING
+        OTHER
+    }
+
+    class DailyTask {
+        +str name
+        +TaskCategory category
+        +int duration
+        +int priority
+        +str notes
+        +bool is_completed
+        +str|None frequency
+        +date|None due_date
+        +str task_id
+        +mark_complete() DailyTask|None
+        +mark_incomplete() None
+        +to_dict() dict
+    }
+
+    class ScheduledTask {
+        +DailyTask task
+        +time start_time
+        +time end_time
+    }
+
+    class Schedule {
+        +date date
+        +list~ScheduledTask~ scheduled_tasks
+        +str reasoning
+        +total_duration int
+        +is_feasible(max_minutes) bool
+        +get_summary() str
+        +add_task(scheduled_task) None
+        +remove_task(task_id) None
+        +to_dict() dict
+    }
+
+    class Constraint {
+        +int max_duration
+        +list~str~ preferred_times
+        +list~TaskCategory~ excluded_categories
+        +is_satisfied(schedule) bool
+    }
+
+    class Pet {
+        +str name
+        +str species
+        +str breed
+        +int age
+        +str health_notes
+        +str pet_id
+        +task_completion_rate float
+        +add_task(task) None
+        +remove_task(task_id) None
+        +get_tasks() list~DailyTask~
+        +get_pending_tasks() list~DailyTask~
+    }
+
+    class User {
+        +str name
+        +str email
+        +int time_available
+        +list~str~ preferences
+        +str user_id
+        +add_pet(pet) None
+        +remove_pet(pet_id) None
+        +get_pets() list~Pet~
+        +get_all_tasks() list~DailyTask~
+        +create_scheduler(pet) Scheduler
+    }
+
+    class Scheduler {
+        +User user
+        +Pet pet
+        +list~Constraint~ constraints
+        +add_constraint(constraint) None
+        +mark_task_complete(task_id) DailyTask|None
+        +filter_tasks(completed, pet_name) list~DailyTask~
+        +detect_conflicts(schedule) list~str~
+        +validate_schedule(schedule) list~str~
+        +reschedule(plan_date, max_retries) Schedule
+        +generate_plan(plan_date) Schedule
+        +explain_plan(candidates, scheduled, max_minutes) str
+    }
+
+    %% Ownership / composition
+    User "1" *-- "0..*" Pet : owns
+    Pet "1" *-- "0..*" DailyTask : has
+
+    %% Scheduler references
+    Scheduler --> User : references
+    Scheduler --> Pet : references
+    Scheduler "1" o-- "0..*" Constraint : applies
+
+    %% Output chain
+    Scheduler ..> Schedule : produces
+    Schedule "1" *-- "0..*" ScheduledTask : contains
+    ScheduledTask --> DailyTask : wraps
+
+    %% Enum usage
+    DailyTask --> TaskCategory : uses
+    Constraint --> TaskCategory : excludes
+
+    %% Cross-class dependencies
+    User ..> Scheduler : create_scheduler()
+    DailyTask ..> DailyTask : mark_complete()
+```
+
+---
+
 ### Suggested workflow
 
 1. Read the scenario carefully and identify requirements and edge cases.
@@ -65,3 +196,5 @@ The test suite covers the three core scheduling behaviors: tasks are placed in c
 5. Add tests to verify key behaviors.
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
+
+<a href="C:\Users\ravur\projects\ai110-module2show-pawpal-starter\pawpal+.png" target="_blank"><img src='C:\Users\ravur\projects\ai110-module2show-pawpal-starter\pawpal+.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>.
