@@ -38,6 +38,9 @@ if "tasks" not in st.session_state:
 if "last_schedule" not in st.session_state:
     st.session_state.last_schedule: Schedule | None = None
 
+if "conflicts" not in st.session_state:
+    st.session_state.conflicts: list[str] = []
+
 # ---------------------------------------------------------------------------
 # Section 1 – Owner info
 # ---------------------------------------------------------------------------
@@ -254,6 +257,7 @@ if st.button("Generate Schedule", type="primary", use_container_width=True):
 
         schedule = scheduler.generate_plan(plan_date=plan_date)
         st.session_state.last_schedule = schedule
+        st.session_state.conflicts = scheduler.detect_conflicts(schedule)
 
 # ---------------------------------------------------------------------------
 # Section 6 – Display results
@@ -265,16 +269,24 @@ if st.session_state.last_schedule is not None:
     st.divider()
     st.header("📅 Today's Schedule")
 
+    # Conflict summary banner
+    conflicts = st.session_state.conflicts
+    if conflicts:
+        for msg in conflicts:
+            st.warning(msg)
+    else:
+        st.success("Plan generated with no scheduling conflicts.")
+
     # Top-level metrics
     m1, m2, m3 = st.columns(3)
     m1.metric("Plan date", str(schedule.date))
     m2.metric("Tasks scheduled", len(schedule.scheduled_tasks))
     m3.metric("Total time (min)", schedule.total_duration)
 
-    # Task cards
+    # Task cards — sorted by start time
     if schedule.scheduled_tasks:
         st.subheader("Scheduled tasks")
-        for st_task in schedule.scheduled_tasks:
+        for st_task in sorted(schedule.scheduled_tasks, key=lambda s: s.start_time):
             task = st_task.task
             with st.container(border=True):
                 tc1, tc2, tc3 = st.columns([2, 1, 1])
@@ -313,6 +325,35 @@ if st.session_state.last_schedule is not None:
                     st.error(v)
             else:
                 st.success("All constraints satisfied.")
+
+    # Filtered task view
+    if selected_pet is not None:
+        with st.expander("Filter tasks", expanded=False):
+            filter_status = st.radio(
+                "Show",
+                ["All", "Pending", "Completed"],
+                horizontal=True,
+                key="filter_status",
+            )
+            completed_filter = None if filter_status == "All" else (filter_status == "Completed")
+            _scheduler_f = Scheduler(user=owner, pet=selected_pet)
+            filtered = _scheduler_f.filter_tasks(completed=completed_filter)
+            if filtered:
+                st.dataframe(
+                    [
+                        {
+                            "Name": t.name,
+                            "Category": t.category.value,
+                            "Duration (min)": t.duration,
+                            "Priority": t.priority,
+                            "Done": t.is_completed,
+                        }
+                        for t in filtered
+                    ],
+                    use_container_width=True,
+                )
+            else:
+                st.info("No tasks match the selected filter.")
 
     # Raw serialised view
     with st.expander("Raw schedule data (JSON)", expanded=False):
